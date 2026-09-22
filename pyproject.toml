@@ -1,0 +1,10 @@
+[project]
+name = "tetra-command-tools"
+version = "0"
+description = "Host-side samplers for tetra-command"
+requires-python = ">=3.11"
+dependencies = ["psutil>=5.9"]
+
+[tool.uv]
+# Nothing here is importable as a package: tools/ holds scripts the app runs.
+package = false

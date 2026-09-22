@@ -1,0 +1,239 @@
+"""A shared world map, drawn through a `View` giving its position, centre and zoom."""
+
+import gc
+import json
+import math
+
+import draw
+import look
+
+FILE = "/system/assets/world.geo.json"
+
+ASPECT = 1.3
+
+LAND_ALPHA = 104
+LAND_SPAN = 90.0
+LAND_BANDS = 24
+
+NIGHT_ALPHA = 150
+NIGHT_PALE_ALPHA = 64
+NIGHT_STEP = 3
+
+_shapes = None
+_bands = ()
+_asked = False
+_pens = {}
+
+
+def ready():
+    """Return False the first time, arming the parse, and True from then on."""
+    global _asked
+    if _shapes is not None:
+        return True
+    if not _asked:
+        _asked = True
+        return False
+    shapes()
+    return True
+
+
+def shapes():
+    """Return every polygon as a shape in degrees, parsed on first use."""
+    global _shapes
+    if _shapes is not None:
+        return _shapes
+    built = []
+    try:
+        with open(FILE) as handle:
+            data = json.loads(handle.read())
+    except (OSError, ValueError) as exc:
+        print(f"worldmap: no map in {FILE}: {exc}")
+        _shapes = ()
+        return _shapes
+    for country in data:
+        for polygon in country.get("polygons") or ():
+            if len(polygon) < 3:
+                continue
+            path = []
+            lon_min = lat_min = 1000.0
+            lon_max = lat_max = -1000.0
+            for lon, lat in polygon:
+                path.append(vec2(lon, -lat))
+                lon_min = min(lon_min, lon)
+                lon_max = max(lon_max, lon)
+                lat_min = min(lat_min, lat)
+                lat_max = max(lat_max, lat)
+            built.append((shape.custom(path), (lon_min + lon_max) * 0.5,
+                          (lat_min + lat_max) * 0.5, lon_min, lon_max, lat_min, lat_max))
+    built.sort(key=_band_of)
+    _shapes = tuple(built)
+    _find_bands()
+    del data, built
+    gc.collect()
+    return _shapes
+
+
+def _band_of(entry):
+    """Return which step of the ramp a polygon is drawn in."""
+    fraction = 1.0 - min(1.0, abs(entry[2]) / LAND_SPAN)
+    return min(LAND_BANDS - 1, int(fraction * LAND_BANDS))
+
+
+def _find_bands():
+    """Work out where each band starts and stops in the sorted shapes."""
+    global _bands
+    edges = []
+    start = 0
+    for band in range(LAND_BANDS):
+        stop = start
+        while stop < len(_shapes) and _band_of(_shapes[stop]) == band:
+            stop += 1
+        edges.append((start, stop))
+        start = stop
+    _bands = tuple(edges)
+
+
+def pens(theme, alpha=LAND_ALPHA):
+    """Return one pen per band of the ramp, the colour for that latitude over the page."""
+    key = (theme.key, alpha)
+    found = _pens.get(key)
+    if found is None:
+        if len(_pens) > 2:
+            _pens.clear()
+        found = _pens[key] = tuple(
+            theme.at((band + 0.5) / LAND_BANDS).with_alpha(alpha).over(theme.bg)
+            for band in range(LAND_BANDS))
+    return found
+
+
+@draw.clears
+def forget():
+    """Drop the pens on a theme change."""
+    _pens.clear()
+
+
+def shortest(degrees):
+    """Return a difference in longitude taken the short way round."""
+    return degrees - 360.0 * math.floor(degrees / 360.0 + 0.5)
+
+
+def terminator_at(lon, solar_lon, solar_lat):
+    """Return the latitude the sun sets at, for one longitude."""
+    hour_angle = math.radians(lon - solar_lon)
+    slope = math.tan(math.radians(solar_lat))
+    if abs(slope) < 1e-6:
+        slope = 1e-6 if slope >= 0 else -1e-6
+    return math.degrees(math.atan(-math.cos(hour_angle) / slope))
+
+
+def night_path(solar_lon, solar_lat):
+    """Return the dark half of the world as a closed path in map degrees."""
+    dark_pole = -90.0 if solar_lat >= 0 else 90.0
+    path = [vec2(-180.0, -dark_pole)]
+    for step in range(-180, 181, NIGHT_STEP):
+        path.append(vec2(step, -terminator_at(step, solar_lon, solar_lat)))
+    path.append(vec2(180.0, -dark_pole))
+    return path
+
+
+class View:
+    """A map's position on screen, its centre in degrees, and `scale` in pixels per degree."""
+
+    def __init__(self, top, height, lon=0.0, lat=0.0, scale=1.0):
+        self.top = top
+        self.height = height
+        self.box = rect(0, top, look.W, height)
+        self.mid = (look.W // 2, top + height // 2)
+        self.lon = lon
+        self.lat = lat
+        self.scale = scale
+        self._night = None
+        self._night_for = None
+        self._placed = {}
+
+    def at(self, lon, lat):
+        """Return where a point in degrees lands on the screen."""
+        return (self.mid[0] + shortest(lon - self.lon) * self.scale,
+                self.mid[1] - (lat - self.lat) * self.scale * ASPECT)
+
+    def holds(self, x, y):
+        return 0 <= x < look.W and self.top <= y < self.top + self.height
+
+    def look_at(self, lon, lat, scale, elapsed, ease_ms):
+        """Ease the centre and zoom toward a place, over elapsed milliseconds."""
+        step = max(0.0, min(1.0, elapsed / ease_ms))
+        self.lon = shortest(self.lon + shortest(lon - self.lon) * step)
+        self.lat += (lat - self.lat) * step
+        self.scale += (scale - self.scale) * step
+
+    def jump_to(self, lon, lat, scale=None):
+        self.lon = shortest(lon)
+        self.lat = lat
+        if scale is not None:
+            self.scale = scale
+
+    def land(self, theme, alpha=LAND_ALPHA):
+        """Draw every polygon in view."""
+        entries = shapes()
+        if not entries:
+            return 0
+        colours = pens(theme, alpha)
+        scale = self.scale
+        half_lon = (look.W * 0.5) / scale
+        half_lat = (self.height * 0.5) / (scale * ASPECT)
+        base_y = self.lat * scale * ASPECT + self.mid[1]
+        drawn = 0
+        was = screen.clip
+        screen.clip = self.box
+        local_floor = math.floor
+        placed = self._placed
+        placed.clear()
+        for band, (first, last) in enumerate(_bands):
+            inked = False
+            for index in range(first, last):
+                entry = entries[index]
+                outline, lon_mid, _lat_mid, lon_min, lon_max, lat_min, lat_max = entry
+                turn = 360.0 * local_floor((self.lon - lon_mid) / 360.0 + 0.5)
+                if (lon_min + turn - self.lon > half_lon
+                        or self.lon - lon_max - turn > half_lon):
+                    continue
+                if lat_min - self.lat > half_lat or self.lat - lat_max > half_lat:
+                    continue
+                if not inked:
+                    screen.pen = colours[band]
+                    inked = True
+                transform = placed.get(turn)
+                if transform is None:
+                    transform = placed[turn] = mat3().translate(
+                        (turn - self.lon) * scale + self.mid[0],
+                        base_y).scale(scale, scale * ASPECT)
+                outline.transform = transform
+                screen.shape(outline)
+                drawn += 1
+        screen.clip = was
+        return drawn
+
+    def night(self, theme, solar_lon, solar_lat, alpha=None):
+        """Wash the half of the world the sun is not on."""
+        key = (int(solar_lon), round(solar_lat, 1))
+        if self._night_for != key:
+            self._night = shape.custom(night_path(solar_lon, solar_lat))
+            self._night_for = key
+        if theme.pale:
+            wash = theme.ink.with_alpha(NIGHT_PALE_ALPHA if alpha is None else alpha)
+        else:
+            wash = theme.bg.with_alpha(NIGHT_ALPHA if alpha is None else alpha)
+        scale = self.scale
+        base_y = self.lat * scale * ASPECT + self.mid[1]
+        nearest = 360.0 * math.floor(self.lon / 360.0 + 0.5)
+        half_lon = (look.W * 0.5) / scale
+        was = screen.clip
+        screen.clip = self.box
+        screen.pen = wash
+        for turn in (nearest - 360.0, nearest, nearest + 360.0):
+            if turn - 180.0 > self.lon + half_lon or turn + 180.0 < self.lon - half_lon:
+                continue
+            self._night.transform = mat3().translate(
+                (turn - self.lon) * scale + self.mid[0], base_y).scale(scale, scale * ASPECT)
+            screen.shape(self._night)
+        screen.clip = was

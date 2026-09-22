@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.gadgetoid.tetra-command</string>
+	<key>CFBundleName</key>
+	<string>Tetra Command</string>
+	<key>CFBundleDisplayName</key>
+	<string>Tetra Command</string>
+	<key>CFBundleExecutable</key>
+	<string>tetra-command</string>
+	<key>CFBundleIconFile</key>
+	<string>icon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Tetra Command shows the weather where you are.</string>
+</dict>
+</plist>

@@ -1,0 +1,7 @@
+[submodule "micropython"]
+	path = micropython
+	url = https://github.com/micropython/micropython
+[submodule "picovector-micropython"]
+	path = picovector-micropython
+	url = https://github.com/pimoroni/picovector-micropython
+	branch = freetype-pico3d

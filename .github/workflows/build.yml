@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      # Not submodules: recursive. MicroPython's own submodules are all port
+      # support we never build, and they are large; picovector-micropython's
+      # nested picovector is the C++ core and is not optional.
+      - name: Check out what the build needs
+        run: |
+          git submodule update --init micropython
+          git submodule update --init --recursive picovector-micropython
+
+      - name: Install SDL3
+        run: brew install sdl3
+
+      - uses: astral-sh/setup-uv@v7
+
+      # The qstr headers are generated, and every object bakes their numbers in.
+      # CI always starts clean, so the incremental hazard the README warns about
+      # cannot bite here.
+      - name: Generate the embed port
+        run: make embed
+
+      - name: Build
+        run: make
+
+      # Exercises the venv, the resource copy and the codesign path, which is
+      # where the app's permissions come from.
+      - name: Bundle
+        run: make bundle
+
+      # --help returns before SDL_Init, so this proves the binary links and runs
+      # without needing a display the runner does not have.
+      - name: It runs
+        run: ./tetra-command --help
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Ruff
+        run: uvx ruff check tools --select F,E9

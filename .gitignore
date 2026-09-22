@@ -1,0 +1,12 @@
+build/
+build-embed/
+micropython_embed/
+*.o
+*.opp
+*.d
+__pycache__/
+/tetra-command
+/macropad
+TetraCommand.app/
+.venv/
+.DS_Store
